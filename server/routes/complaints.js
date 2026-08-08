@@ -51,18 +51,24 @@ router.post('/submit', authMiddleware, upload.single('image'), async (req, res) 
     const complaintId = `CIV-2026-${Date.now().toString().slice(-6)}`;
     const finalTitle = title || aiResult.suggestedTitle || `${aiResult.categoryLabel || aiResult.category} Report`;
 
+    const isRealVal = aiResult.isReal ? 1 : 0;
+    const validationReason = aiResult.validityReason || '';
+    const imageDetailsStr = JSON.stringify(aiResult.imageDetails || {});
+
     run(
       `INSERT INTO complaints (
         complaint_id, citizen_id, title, description, category, ai_category,
         ai_confidence, ai_description, ai_possible_risk, severity, severity_score,
-        status, priority, department_id, assigned_officer_id, location_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'department_assigned', ?, ?, ?, ?)`,
+        status, priority, department_id, assigned_officer_id, location_id,
+        ai_is_real, ai_validation_reason, ai_image_details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'department_assigned', ?, ?, ?, ?, ?, ?, ?)`,
       [
         complaintId, citizenId, finalTitle, description || aiResult.description || '',
         aiResult.category, aiResult.category,
         aiResult.confidence, aiResult.description || '', aiResult.possibleRisk || '',
         aiResult.severity, aiResult.severityScore,
-        aiResult.severity, dept.id, officer.id, locationId
+        aiResult.severity, dept.id, officer.id, locationId,
+        isRealVal, validationReason, imageDetailsStr
       ]
     );
 
@@ -96,6 +102,13 @@ router.post('/submit', authMiddleware, upload.single('image'), async (req, res) 
 
     // Step 8: SLA
     createSlaRecord(newComplaint.id, aiResult.severity);
+
+    // Step 9: Send notification to the assigned officer
+    run(
+      `INSERT INTO notifications (user_id, complaint_id, type, message)
+       VALUES (?, ?, 'new_assignment', ?)`,
+      [officer.id, newComplaint.id, `New ${aiResult.categoryLabel || aiResult.category} reported: "${finalTitle}"`]
+    );
 
     saveDb();
 

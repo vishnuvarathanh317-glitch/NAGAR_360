@@ -181,7 +181,10 @@ export default function TrackComplaint() {
                 severity: c.severity,
                 severityScore: c.severity_score,
                 description: c.ai_description,
-                possibleRisk: c.ai_possible_risk
+                possibleRisk: c.ai_possible_risk,
+                isReal: c.ai_is_real,
+                validityReason: c.ai_validation_reason,
+                imageDetails: c.ai_image_details ? JSON.parse(c.ai_image_details) : null
               }} />
             </div>
           )}

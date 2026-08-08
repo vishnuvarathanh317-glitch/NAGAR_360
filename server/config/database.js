@@ -203,6 +203,17 @@ function initializeSchema() {
     UNIQUE(entity_type, entity_name)
   )`);
 
+  // Migrate schema for Real/Fake AI authenticity tracking
+  try {
+    db.run("ALTER TABLE complaints ADD COLUMN ai_is_real INTEGER DEFAULT 1");
+  } catch (e) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE complaints ADD COLUMN ai_validation_reason TEXT");
+  } catch (e) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE complaints ADD COLUMN ai_image_details TEXT");
+  } catch (e) { /* column already exists */ }
+
   console.log('✅ Database schema initialized');
 }
 

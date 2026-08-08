@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ThumbsUp, MessageCircle, Share2, Clock, Bookmark } from 'lucide-react';
 import PriorityBadge from '../Common/PriorityBadge';
 
-const API_BASE = 'http://localhost:5000';
+const API_BASE = '';
 
 const DEPT_ICONS = {
   ROAD: '🛣️', WASTE: '🗑️', ELECTRICAL: '💡', WATER: '💧', PARKS: '🌳'

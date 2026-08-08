@@ -29,7 +29,8 @@ async function analyzeImage(imageBuffer, mimeType = 'image/jpeg') {
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-    const prompt = `You are an expert civic infrastructure analyst. Analyze this image of a civic/urban issue.
+    const prompt = `You are an expert civic infrastructure analyst and verification officer. Analyze this image of a civic/urban issue.
+First, perform an authenticity and verification check to determine if the submission is a genuine, real-world civic issue or if it is fake, stock, edited, or irrelevant.
 
 Return a JSON object with these exact fields:
 {
@@ -40,10 +41,17 @@ Return a JSON object with these exact fields:
   "severityScore": number 0-100,
   "description": 1-2 sentence description of what you see,
   "possibleRisk": potential public safety risk,
-  "suggestedTitle": short title for the complaint
+  "suggestedTitle": short title for the complaint,
+  "isReal": true if this is a genuine, local, real-world civic issue in a public area; false if it is a stock photo from the web, a computer-generated image, an unrelated photo (like an indoor pet, food, meme, or document), or clearly edited/photoshopped,
+  "validityReason": a concise explanation of your authenticity analysis (e.g. why you think it is genuine or suspicious),
+  "imageDetails": {
+    "detectedObjects": array of strings of main objects detected (e.g. ["pothole", "asphalt", "car"]),
+    "isStockImage": true if the photo shows pristine stock qualities, standard online watermarks, or professional studio lighting; false otherwise,
+    "isEdited": true if there are signs of image tampering, digital manipulation, overlays, or photoshop edits; false otherwise
+  }
 }
 
-If the image does not show a civic issue, use category "road_obstruction" with low confidence.
+If the image does not show a civic issue, set "isReal" to false.
 Return ONLY valid JSON, no markdown.`;
 
     const result = await model.generateContent([
@@ -66,7 +74,14 @@ Return ONLY valid JSON, no markdown.`;
       category: analysis.category || 'pothole',
       confidence: Math.min(1, Math.max(0, analysis.confidence || 0.7)),
       severity: analysis.severity || 'medium',
-      severityScore: analysis.severityScore || 50
+      severityScore: analysis.severityScore || 50,
+      isReal: analysis.isReal !== undefined ? analysis.isReal : true,
+      validityReason: analysis.validityReason || 'Verified real issue from photo evidence.',
+      imageDetails: analysis.imageDetails || {
+        detectedObjects: [],
+        isStockImage: false,
+        isEdited: false
+      }
     };
   } catch (err) {
     console.error('Gemini analysis error:', err.message);
@@ -80,6 +95,11 @@ function mockAnalysis() {
   const severities = ['critical', 'high', 'medium', 'low'];
   const severity = severities[Math.floor(Math.random() * 3)]; // weighted toward higher
 
+  const isReal = Math.random() > 0.15; // 85% chance of being real in mock
+  const validityReason = isReal 
+    ? `Verified. High-fidelity visual evidence of ${CIVIC_CATEGORIES[cat].label.toLowerCase()} in a public environment.`
+    : "Flagged. This photo appears to be a stock image retrieved from the internet rather than a local report.";
+
   return {
     category: cat,
     categoryLabel: CIVIC_CATEGORIES[cat].label,
@@ -92,7 +112,14 @@ function mockAnalysis() {
     description: `Detected ${CIVIC_CATEGORIES[cat].label.toLowerCase()} requiring attention.`,
     possibleRisk: 'Potential public safety concern identified.',
     suggestedTitle: `${CIVIC_CATEGORIES[cat].label} Report`,
-    isMock: true
+    isMock: true,
+    isReal,
+    validityReason,
+    imageDetails: {
+      detectedObjects: [cat.replace(/_/g, ' '), 'road', 'outdoor'],
+      isStockImage: !isReal,
+      isEdited: false
+    }
   };
 }
 

@@ -109,3 +109,30 @@ export async function loginUser(email, password) {
   }
   return res.json();
 }
+
+export async function fetchNotifications() {
+  const res = await fetch(`${API_BASE}/officers/notifications`, {
+    headers: getAuthHeader()
+  });
+  if (!res.ok) throw new Error('Failed to fetch notifications');
+  return res.json();
+}
+
+export async function markNotificationRead(id) {
+  const res = await fetch(`${API_BASE}/officers/notifications/${id}/read`, {
+    method: 'PATCH',
+    headers: getAuthHeader()
+  });
+  if (!res.ok) throw new Error('Failed to mark notification as read');
+  return res.json();
+}
+
+export async function sendOfficerVoiceCommand(command, queueSummary) {
+  const res = await fetch(`${API_BASE}/officers/voice-command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    body: JSON.stringify({ command, queueSummary })
+  });
+  if (!res.ok) throw new Error('Failed to send voice command');
+  return res.json();
+}

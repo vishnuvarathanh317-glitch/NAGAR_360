@@ -1,4 +1,5 @@
 const express = require('express');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { run, get, all, saveDb } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -121,5 +122,228 @@ router.post('/complaints/:id/resolve', authMiddleware, upload.single('afterImage
     res.status(500).json({ error: 'Failed to resolve.' });
   }
 });
+
+// Get notifications for logged-in officer
+router.get('/notifications', authMiddleware, (req, res) => {
+  try {
+    const officerId = req.user.id;
+    const notifications = all(
+      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+      [officerId]
+    );
+    res.json({ notifications });
+  } catch (err) {
+    console.error('Notifications error:', err);
+    res.status(500).json({ error: 'Failed to retrieve notifications.' });
+  }
+});
+
+// Mark notification as read
+router.patch('/notifications/:id/read', authMiddleware, (req, res) => {
+  try {
+    const officerId = req.user.id;
+    run(
+      'UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?',
+      [req.params.id, officerId]
+    );
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Read notification error:', err);
+    res.status(500).json({ error: 'Failed to update notification.' });
+  }
+});
+
+// Voice Command Processor for Officers
+router.post('/voice-command', authMiddleware, async (req, res) => {
+  try {
+    const { command, queueSummary } = req.body;
+    const officerId = req.user.id;
+    const officerName = req.user.name;
+
+    if (!command) {
+      return res.status(400).json({ error: 'Command text required.' });
+    }
+
+    // Fetch active complaints for context
+    const complaints = all(`
+      SELECT c.id, c.complaint_id, c.title, c.category, c.status, c.severity, l.address
+      FROM complaints c
+      LEFT JOIN locations l ON c.location_id = l.id
+      WHERE (c.assigned_officer_id = ? OR c.department_id = ?)
+      AND c.status NOT IN ('resolved', 'citizen_verified')
+    `, [officerId, req.user.department_id || 1]);
+
+    // Fetch unread notifications
+    const unreadNotifications = all(`
+      SELECT * FROM notifications WHERE user_id = ? AND is_read = 0
+    `, [officerId]);
+
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+    let voiceResult = null;
+
+    if (GEMINI_API_KEY) {
+      try {
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+        const systemPrompt = `You are the NAGAR_360 AI Voice Assistant for municipal officers.
+You are helping Officer ${officerName} (ID: ${officerId}) manage their assigned queue of civic issues.
+
+Current queue details:
+${JSON.stringify(complaints, null, 2)}
+
+Unread alerts/notifications:
+${JSON.stringify(unreadNotifications, null, 2)}
+
+The officer spoke this command: "${command}"
+
+Identify the officer's intent. You MUST return a JSON object with these exact fields:
+{
+  "speech": "A natural, helpful spoken response to read out loud to the officer",
+  "action": "one of: 'highlight_complaint', 'update_status', 'read_notifications', 'summarize_queue', 'none'",
+  "complaintId": "the complaint_id string (e.g. 'CIV-2026-104821') OR database integer ID if the command refers to a specific complaint; otherwise null",
+  "status": "if action is 'update_status', set to: 'officer_acknowledged' (if they said acknowledge/accept/review), 'work_started' (if they said start/begin/repair/working), or 'resolved' (if they said resolved/completed/done); otherwise null"
+}
+
+Guidance:
+- If the officer asks for summary or stats, set action to "summarize_queue".
+- If the officer asks for notifications or alerts, set action to "read_notifications".
+- If the officer wants to check or show a specific issue, set action to "highlight_complaint" and provide the complaintId.
+- If the officer wants to change a status, set action to "update_status", set complaintId, and set the status field.
+- If the command is unclear or not supported, respond politely using speech and set action to "none".
+
+Return ONLY valid JSON. No markdown.`;
+
+        const result = await model.generateContent(systemPrompt);
+        const text = result.response.text();
+        const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        voiceResult = JSON.parse(cleaned);
+      } catch (err) {
+        console.error('Gemini Voice Assistant Error:', err.message);
+      }
+    }
+
+    // Fallback parser if Gemini fails or is unavailable
+    if (!voiceResult) {
+      voiceResult = parseVoiceCommandFallback(command, complaints, unreadNotifications, queueSummary);
+    }
+
+    // If action is "update_status", execute the status update in the database
+    if (voiceResult.action === 'update_status' && voiceResult.complaintId) {
+      const complaint = get(
+        'SELECT * FROM complaints WHERE complaint_id = ? OR id = ?',
+        [voiceResult.complaintId, voiceResult.complaintId]
+      );
+
+      if (complaint) {
+        const allowed = ['officer_acknowledged', 'work_started', 'resolved'];
+        const targetStatus = voiceResult.status;
+
+        if (allowed.includes(targetStatus)) {
+          const prev = complaint.status;
+          run(
+            `UPDATE complaints SET status = ?, assigned_officer_id = ?, updated_at = datetime('now') WHERE id = ?`,
+            [targetStatus, officerId, complaint.id]
+          );
+          run(
+            `INSERT INTO status_history (complaint_id, from_status, to_status, changed_by, notes)
+             VALUES (?, ?, ?, ?, ?)`,
+            [complaint.id, prev, targetStatus, officerId, `Status updated via Voice Command: "${command}"`]
+          );
+          saveDb();
+          voiceResult.speech = `Done. I've updated the status of issue ${complaint.complaint_id} to ${targetStatus.replace(/_/g, ' ')}.`;
+        } else {
+          voiceResult.speech = `I found complaint ${complaint.complaint_id}, but the status "${targetStatus}" is not valid.`;
+          voiceResult.action = 'none';
+        }
+      } else {
+        voiceResult.speech = `Sorry Officer, I could not find a complaint matching ${voiceResult.complaintId} in your queue.`;
+        voiceResult.action = 'none';
+      }
+    }
+
+    res.json({ result: voiceResult });
+  } catch (err) {
+    console.error('Voice command processor error:', err);
+    res.status(500).json({ error: 'Failed to process voice command.' });
+  }
+});
+
+// Helper for local keyword parsing fallback
+function parseVoiceCommandFallback(command, complaints, notifications, queueSummary) {
+  const norm = command.toLowerCase();
+  
+  // 1. Read Notifications
+  if (norm.includes('notification') || norm.includes('alert') || norm.includes('unread')) {
+    const unread = notifications.filter(n => n.is_read === 0);
+    const speech = unread.length > 0 
+      ? `You have ${unread.length} unread alerts. The latest is: ${unread[0].message}.`
+      : "You have no unread notifications.";
+    return {
+      speech,
+      action: "read_notifications",
+      complaintId: null,
+      status: null
+    };
+  }
+
+  // 2. Summarize queue
+  if (norm.includes('summarize') || norm.includes('stats') || norm.includes('count') || norm.includes('overview') || norm.includes('queue')) {
+    const active = complaints.length;
+    const speech = `Officer, your queue has ${active} active issues. You can say check, acknowledge, or resolve followed by the ID to manage them.`;
+    return {
+      speech,
+      action: "summarize_queue",
+      complaintId: null,
+      status: null
+    };
+  }
+
+  // 3. Acknowledge/Start/Resolve Status Updates
+  const updateMatch = norm.match(/(acknowledge|start|begin|resolve|complete|done)\s*(?:complaint|issue|task)?\s*(?:civ-2026-)?(\d+)/i);
+  if (updateMatch) {
+    const verb = updateMatch[1];
+    const digits = updateMatch[2];
+    const matchedC = complaints.find(c => c.complaint_id.endsWith(digits) || String(c.id) === digits);
+
+    if (matchedC) {
+      let status = null;
+      if (['acknowledge'].includes(verb)) status = 'officer_acknowledged';
+      else if (['start', 'begin'].includes(verb)) status = 'work_started';
+      else if (['resolve', 'complete', 'done'].includes(verb)) status = 'resolved';
+
+      return {
+        speech: `Sure, I'll update the status for complaint ${matchedC.complaint_id}.`,
+        action: "update_status",
+        complaintId: matchedC.complaint_id,
+        status
+      };
+    }
+  }
+
+  // 4. Highlight/Check details of specific issue
+  const checkMatch = norm.match(/(check|show|open|detail|view|highlight)\s*(?:complaint|issue|task)?\s*(?:civ-2026-)?(\d+)/i);
+  if (checkMatch) {
+    const digits = checkMatch[2];
+    const matchedC = complaints.find(c => c.complaint_id.endsWith(digits) || String(c.id) === digits);
+    if (matchedC) {
+      return {
+        speech: `Here is complaint ${matchedC.complaint_id} regarding ${matchedC.title}.`,
+        action: "highlight_complaint",
+        complaintId: matchedC.complaint_id,
+        status: null
+      };
+    }
+  }
+
+  // 5. Default Response
+  return {
+    speech: "I heard you say: \"" + command + "\". I can help you summarize your queue, check alerts, or manage complaints. Please speak clearly.",
+    action: "none",
+    complaintId: null,
+    status: null
+  };
+}
 
 module.exports = router;

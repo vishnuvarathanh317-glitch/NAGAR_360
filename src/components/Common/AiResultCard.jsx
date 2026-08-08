@@ -58,6 +58,57 @@ export default function AiResultCard({ result }) {
           <strong>⚠️ Risk:</strong> {result.possibleRisk}
         </div>
       )}
+
+      {/* AI Verification Report */}
+      {result.isReal !== undefined && (
+        <div className="authenticity-card" style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              AI Authenticity Check
+            </span>
+            <span className={`authenticity-badge ${result.isReal ? 'authenticity-badge--real' : 'authenticity-badge--fake'}`}>
+              {result.isReal ? '✓ Verified Real' : '⚠ Flagged Suspicious'}
+            </span>
+          </div>
+
+          {result.validityReason && (
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4, margin: '8px 0' }}>
+              <strong>AI Review:</strong> {result.validityReason}
+            </p>
+          )}
+
+          {result.imageDetails && (
+            <div className="authenticity-details-grid" style={{ marginTop: 10 }}>
+              <div className="authenticity-detail-item" style={{ gridColumn: 'span 2' }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', textTransform: 'uppercase' }}>Detected Elements</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginTop: 2 }}>
+                  {result.imageDetails.detectedObjects && result.imageDetails.detectedObjects.length > 0
+                    ? result.imageDetails.detectedObjects.join(', ')
+                    : 'None'}
+                </div>
+              </div>
+
+              <div className="authenticity-detail-item" style={{
+                borderLeft: `2px solid ${result.imageDetails.isStockImage ? 'var(--accent-red)' : 'var(--accent-green)'}`
+              }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', textTransform: 'uppercase' }}>Stock Image Flag</div>
+                <div style={{ fontWeight: 600, color: result.imageDetails.isStockImage ? 'var(--accent-red)' : 'var(--text-primary)', marginTop: 2 }}>
+                  {result.imageDetails.isStockImage ? '⚠ Stock Photo' : 'No (Original Capture)'}
+                </div>
+              </div>
+
+              <div className="authenticity-detail-item" style={{
+                borderLeft: `2px solid ${result.imageDetails.isEdited ? 'var(--accent-red)' : 'var(--accent-green)'}`
+              }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', textTransform: 'uppercase' }}>Manipulation Check</div>
+                <div style={{ fontWeight: 600, color: result.imageDetails.isEdited ? 'var(--accent-red)' : 'var(--text-primary)', marginTop: 2 }}>
+                  {result.imageDetails.isEdited ? '⚠ Edited/Tampered' : 'No (Untampered)'}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
