@@ -5,7 +5,7 @@ const morgan = require('morgan');
 const path = require('path');
 const cron = require('node-cron');
 
-const { initDatabase } = require('./config/database');
+const { initDatabase, get } = require('./config/database');
 const { checkAndEscalateBreaches } = require('./services/slaService');
 const { calculatePerformanceScores } = require('./services/performanceService');
 
@@ -63,6 +63,17 @@ app.get('*', (req, res) => {
 // Initialize DB & Start Server
 async function start() {
   await initDatabase();
+
+  // Auto-seed database if empty (essential for Render deployments)
+  try {
+    const userCheck = get('SELECT COUNT(*) as count FROM users');
+    if (!userCheck || userCheck.count === 0) {
+      console.log('🌱 Database is empty. Running auto-seeding...');
+      require('./seed');
+    }
+  } catch (err) {
+    console.error('⚠️ Auto-seeding check failed:', err.message);
+  }
 
   // Run initial performance calculation
   calculatePerformanceScores();
