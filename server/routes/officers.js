@@ -185,35 +185,93 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
     if (GEMINI_API_KEY) {
       try {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        
+        // Train the model with a strict JSON schema and response behavior
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.0-flash',
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'object',
+              properties: {
+                speech: {
+                  type: 'string',
+                  description: 'A warm, natural, and helpful verbal response to read aloud. Use the officer\'s name, congratulate them on resolved actions, or warn them about overdue deadlines in their queue.'
+                },
+                action: {
+                  type: 'string',
+                  enum: ['highlight_complaint', 'update_status', 'read_notifications', 'summarize_queue', 'none'],
+                  description: 'The structural action corresponding to the officer\'s request.'
+                },
+                complaintId: {
+                  type: 'string',
+                  description: 'The complaint ID (e.g. CIV-2026-104821) if referring to a specific complaint; otherwise null.',
+                  nullable: true
+                },
+                status: {
+                  type: 'string',
+                  enum: ['officer_acknowledged', 'work_started', 'resolved'],
+                  description: 'The target status if the action is update_status; otherwise null.',
+                  nullable: true
+                }
+              },
+              required: ['speech', 'action', 'complaintId', 'status']
+            }
+          }
+        });
 
-        const systemPrompt = `You are the NAGAR_360 AI Voice Assistant for municipal officers.
-You are helping Officer ${officerName} (ID: ${officerId}) manage their assigned queue of civic issues.
+        const systemPrompt = `You are "CivicAI Prime", the dedicated, intelligent, and supportive voice assistant for Officer ${officerName} (ID: ${officerId}).
+Your job is to interpret their spoken command, guide them through their workflow, speak in a conversational and professional tone, and return the structured action JSON.
 
-Current queue details:
+Officer's Active Queue:
 ${JSON.stringify(complaints, null, 2)}
 
-Unread alerts/notifications:
+Officer's Unread Alerts:
 ${JSON.stringify(unreadNotifications, null, 2)}
 
-The officer spoke this command: "${command}"
+Spoken Command: "${command}"
 
-Identify the officer's intent. You MUST return a JSON object with these exact fields:
-{
-  "speech": "A natural, helpful spoken response to read out loud to the officer",
-  "action": "one of: 'highlight_complaint', 'update_status', 'read_notifications', 'summarize_queue', 'none'",
-  "complaintId": "the complaint_id string (e.g. 'CIV-2026-104821') OR database integer ID if the command refers to a specific complaint; otherwise null",
-  "status": "if action is 'update_status', set to: 'officer_acknowledged' (if they said acknowledge/accept/review), 'work_started' (if they said start/begin/repair/working), or 'resolved' (if they said resolved/completed/done); otherwise null"
-}
+Here is training data (examples of commands, contexts, and correct responses):
 
-Guidance:
-- If the officer asks for summary or stats, set action to "summarize_queue".
-- If the officer asks for notifications or alerts, set action to "read_notifications".
-- If the officer wants to check or show a specific issue, set action to "highlight_complaint" and provide the complaintId.
-- If the officer wants to change a status, set action to "update_status", set complaintId, and set the status field.
-- If the command is unclear or not supported, respond politely using speech and set action to "none".
+EXAMPLE 1 (Acknowledge task):
+- Command: "Acknowledge the water leak report"
+- Context: Queue has water leak (CIV-2026-104824) in 'department_assigned' status.
+- Output: {
+    "speech": "Understood, Officer. I'm updating the status of the Adyar water leak report to Acknowledged. I'll highlight it on your dashboard now.",
+    "action": "update_status",
+    "complaintId": "CIV-2026-104824",
+    "status": "officer_acknowledged"
+  }
 
-Return ONLY valid JSON. No markdown.`;
+EXAMPLE 2 (Read notifications):
+- Command: "Show me the alerts"
+- Output: {
+    "speech": "Certainly, Officer. Opening your notifications panel now. You have a new alert regarding an SLA breach.",
+    "action": "read_notifications",
+    "complaintId": null,
+    "status": null
+  }
+
+EXAMPLE 3 (Summarize queue):
+- Command: "What does my queue look like today?"
+- Output: {
+    "speech": "You currently have 3 active reports on your dashboard. This includes 1 brand new ticket and 1 overdue task requiring urgent action. Shall we start with the overdue one?",
+    "action": "summarize_queue",
+    "complaintId": null,
+    "status": null
+  }
+
+EXAMPLE 4 (Highlight priority):
+- Command: "What should I work on first?"
+- Context: Queue has an overdue road repair (CIV-2026-104821).
+- Output: {
+    "speech": "Officer, your highest priority task is complaint CIV-2026-104821 for the Anna Salai pothole. It is currently overdue and needs immediate action. I've highlighted it for you.",
+    "action": "highlight_complaint",
+    "complaintId": "CIV-2026-104821",
+    "status": null
+  }
+
+Interpret the officer's command and return the JSON object following the schema. Return only valid JSON.`;
 
         const result = await model.generateContent(systemPrompt);
         const text = result.response.text();

@@ -27,32 +27,88 @@ async function analyzeImage(imageBuffer, mimeType = 'image/jpeg') {
   if (!genAI) return mockAnalysis();
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            category: {
+              type: 'string',
+              enum: Object.keys(CIVIC_CATEGORIES),
+              description: 'The classified category of the civic issue.'
+            },
+            categoryLabel: {
+              type: 'string',
+              description: 'The human-readable label of the category.'
+            },
+            confidence: {
+              type: 'number',
+              description: 'Confidence rating between 0.0 and 1.0.'
+            },
+            severity: {
+              type: 'string',
+              enum: ['critical', 'high', 'medium', 'low'],
+              description: 'Severity level.'
+            },
+            severityScore: {
+              type: 'integer',
+              description: 'Severity score from 0 to 100.'
+            },
+            description: {
+              type: 'string',
+              description: 'A 1-2 sentence description of the civic problem.'
+            },
+            possibleRisk: {
+              type: 'string',
+              description: 'Associated public safety risks.'
+            },
+            suggestedTitle: {
+              type: 'string',
+              description: 'Short title for the complaint.'
+            },
+            isReal: {
+              type: 'boolean',
+              description: 'true if this is a genuine, local, real-world civic issue in a public area; false if it is a stock photo, duplicate, computer-generated, unrelated, or clearly edited.'
+            },
+            validityReason: {
+              type: 'string',
+              description: 'Justification for the real or fake verification check.'
+            },
+            imageDetails: {
+              type: 'object',
+              properties: {
+                detectedObjects: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Primary elements/objects detected in the photo.'
+                },
+                isStockImage: {
+                  type: 'boolean',
+                  description: 'true if stock photo indicators are present.'
+                },
+                isEdited: {
+                  type: 'boolean',
+                  description: 'true if visual edits or digital manipulations are detected.'
+                }
+              },
+              required: ['detectedObjects', 'isStockImage', 'isEdited']
+            }
+          },
+          required: [
+            'category', 'categoryLabel', 'confidence', 'severity',
+            'severityScore', 'description', 'possibleRisk', 'suggestedTitle',
+            'isReal', 'validityReason', 'imageDetails'
+          ]
+        }
+      }
+    });
 
     const prompt = `You are an expert civic infrastructure analyst and verification officer. Analyze this image of a civic/urban issue.
-First, perform an authenticity and verification check to determine if the submission is a genuine, real-world civic issue or if it is fake, stock, edited, or irrelevant.
+Identify the category of the issue and perform an authenticity check to determine if the submission is a genuine, real-world civic issue or if it is fake, stock, edited, or irrelevant.
 
-Return a JSON object with these exact fields:
-{
-  "category": one of: ${Object.keys(CIVIC_CATEGORIES).join(', ')},
-  "categoryLabel": human-readable label,
-  "confidence": number between 0.0 and 1.0,
-  "severity": one of: "critical", "high", "medium", "low",
-  "severityScore": number 0-100,
-  "description": 1-2 sentence description of what you see,
-  "possibleRisk": potential public safety risk,
-  "suggestedTitle": short title for the complaint,
-  "isReal": true if this is a genuine, local, real-world civic issue in a public area; false if it is a stock photo from the web, a computer-generated image, an unrelated photo (like an indoor pet, food, meme, or document), or clearly edited/photoshopped,
-  "validityReason": a concise explanation of your authenticity analysis (e.g. why you think it is genuine or suspicious),
-  "imageDetails": {
-    "detectedObjects": array of strings of main objects detected (e.g. ["pothole", "asphalt", "car"]),
-    "isStockImage": true if the photo shows pristine stock qualities, standard online watermarks, or professional studio lighting; false otherwise,
-    "isEdited": true if there are signs of image tampering, digital manipulation, overlays, or photoshop edits; false otherwise
-  }
-}
-
-If the image does not show a civic issue, set "isReal" to false.
-Return ONLY valid JSON, no markdown.`;
+If the image does not show a civic issue, use category "road_obstruction" and set "isReal" to false.`;
 
     const result = await model.generateContent([
       prompt,
